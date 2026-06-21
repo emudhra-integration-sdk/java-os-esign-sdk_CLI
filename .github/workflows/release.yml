@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
 
 permissions:
   contents: write
@@ -36,21 +42,30 @@ jobs:
             && echo "JAR built: $(du -sh dist/eSignASPLibrary5_10.jar | cut -f1)" \
             || (echo "Build failed — JAR not found" && exit 1)
 
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Extract changelog for this version
         id: changelog
         shell: bash
         run: |
-          VERSION="${{ github.ref_name }}"
-          # Extract the block for this version from CHANGELOG.md
+          VERSION="${{ steps.tag.outputs.TAG }}"
+          ESCAPED="${VERSION//./\\.}"
+
           NOTES=$(awk "
-            /^## \[?${VERSION//./\\.}\]?/ { found=1; next }
+            /^## \[?${ESCAPED}\]?/ { found=1; next }
             found && /^## \[?v[0-9]/ { exit }
             found { print }
           " CHANGELOG.md)
 
-          # Fallback to git log if CHANGELOG section is missing
           if [ -z "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-            PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || echo "")
+            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
             if [ -n "$PREV" ]; then
               NOTES=$(git log --pretty=format:"- %s" "${PREV}..HEAD")
             else
@@ -65,27 +80,36 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: eSign CLI ${{ github.ref_name }}
-          body: |
-            ## eSign Java SDK CLI — ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          NOTES="${{ steps.changelog.outputs.NOTES }}"
 
-            ${{ steps.changelog.outputs.NOTES }}
+          BODY="## eSign Java SDK CLI — ${TAG}
 
-            ---
+          ${NOTES}
 
-            ### Installation
+          ---
 
-            Download `eSignASPLibrary5_10.jar` from the assets below.
+          ### Installation
 
-            1. Place the JAR in the `dist/` folder alongside the `lib/` directory.
-            2. On Linux/macOS: `chmod +x esign-cli.sh`
-            3. Call from PHP: `shell_exec('/opt/esign/esign-cli.sh request.json')`
+          1. Download \`eSignASPLibrary5_10.jar\` from the assets below.
+          2. Place it in \`dist/\` alongside the \`lib/\` directory and launcher scripts.
+          3. Linux/macOS: \`chmod +x esign-cli.sh\`
+          4. Call from PHP: \`shell_exec('/opt/esign/esign-cli.sh request.json')\`
 
-            **Requirements:** Java 11+
+          **Requirements:** Java 11+
 
-            See [CLI_GUIDE.md](https://github.com/${{ github.repository }}/blob/master/documentation/CLI_GUIDE.md) for full documentation and PHP examples.
-          files: dist/eSignASPLibrary5_10.jar
-          draft: false
-          prerelease: false
+          See [CLI_GUIDE.md](https://github.com/${GITHUB_REPOSITORY}/blob/master/documentation/CLI_GUIDE.md) for full documentation."
+
+          # Create tag if triggered manually
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git tag "${TAG}" || true
+            git push origin "${TAG}" || true
+          fi
+
+          gh release create "${TAG}" \
+            --title "eSign CLI ${TAG}" \
+            --notes "${BODY}" \
+            dist/eSignASPLibrary5_10.jar
