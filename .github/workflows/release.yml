@@ -36,80 +36,40 @@ jobs:
       - name: Build JAR
         run: ant jar
 
-      - name: Verify build
-        run: |
-          test -f dist/eSignASPLibrary5_10.jar \
-            && echo "JAR built: $(du -sh dist/eSignASPLibrary5_10.jar | cut -f1)" \
-            || (echo "Build failed — JAR not found" && exit 1)
+      - name: Verify JAR
+        run: test -f dist/eSignASPLibrary5_10.jar && du -sh dist/eSignASPLibrary5_10.jar
 
-      - name: Resolve tag name
+      - name: Resolve release tag
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Extract changelog for this version
-        id: changelog
-        shell: bash
+      - name: Extract release notes from CHANGELOG
+        env:
+          VERSION: ${{ steps.tag.outputs.name }}
         run: |
-          VERSION="${{ steps.tag.outputs.TAG }}"
-          ESCAPED="${VERSION//./\\.}"
-
-          NOTES=$(awk "
-            /^## \[?${ESCAPED}\]?/ { found=1; next }
-            found && /^## \[?v[0-9]/ { exit }
-            found { print }
-          " CHANGELOG.md)
-
-          if [ -z "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-            if [ -n "$PREV" ]; then
-              NOTES=$(git log --pretty=format:"- %s" "${PREV}..HEAD")
-            else
-              NOTES=$(git log --pretty=format:"- %s" HEAD)
-            fi
+          VERSION_ESC=$(printf '%s' "$VERSION" | sed 's/[.]/\\./g')
+          awk "/^## .*${VERSION_ESC}/{f=1;next} f&&/^## /{exit} f{print}" CHANGELOG.md \
+            > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "See commit history for changes in this release." > release_notes.md
           fi
 
-          {
-            echo "NOTES<<EOF"
-            printf '%s\n' "$NOTES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+      - name: Create tag (manual trigger only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git tag "${{ steps.tag.outputs.name }}" || true
+          git push origin "${{ steps.tag.outputs.name }}" || true
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.tag.outputs.TAG }}"
-          NOTES="${{ steps.changelog.outputs.NOTES }}"
-
-          BODY="## eSign Java SDK CLI — ${TAG}
-
-          ${NOTES}
-
-          ---
-
-          ### Installation
-
-          1. Download \`eSignASPLibrary5_10.jar\` from the assets below.
-          2. Place it in \`dist/\` alongside the \`lib/\` directory and launcher scripts.
-          3. Linux/macOS: \`chmod +x esign-cli.sh\`
-          4. Call from PHP: \`shell_exec('/opt/esign/esign-cli.sh request.json')\`
-
-          **Requirements:** Java 11+
-
-          See [CLI_GUIDE.md](https://github.com/${GITHUB_REPOSITORY}/blob/master/documentation/CLI_GUIDE.md) for full documentation."
-
-          # Create tag if triggered manually
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            git tag "${TAG}" || true
-            git push origin "${TAG}" || true
-          fi
-
-          gh release create "${TAG}" \
-            --title "eSign CLI ${TAG}" \
-            --notes "${BODY}" \
+          gh release create "${{ steps.tag.outputs.name }}" \
+            --title "eSign CLI ${{ steps.tag.outputs.name }}" \
+            --notes-file release_notes.md \
             dist/eSignASPLibrary5_10.jar
