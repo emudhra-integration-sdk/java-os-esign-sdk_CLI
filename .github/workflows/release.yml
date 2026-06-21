@@ -1,0 +1,91 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Install Apache Ant
+        run: sudo apt-get update -q && sudo apt-get install -y ant
+
+      - name: Build JAR
+        run: ant jar
+
+      - name: Verify build
+        run: |
+          test -f dist/eSignASPLibrary5_10.jar \
+            && echo "JAR built: $(du -sh dist/eSignASPLibrary5_10.jar | cut -f1)" \
+            || (echo "Build failed — JAR not found" && exit 1)
+
+      - name: Extract changelog for this version
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          # Extract the block for this version from CHANGELOG.md
+          NOTES=$(awk "
+            /^## \[?${VERSION//./\\.}\]?/ { found=1; next }
+            found && /^## \[?v[0-9]/ { exit }
+            found { print }
+          " CHANGELOG.md)
+
+          # Fallback to git log if CHANGELOG section is missing
+          if [ -z "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+            PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || echo "")
+            if [ -n "$PREV" ]; then
+              NOTES=$(git log --pretty=format:"- %s" "${PREV}..HEAD")
+            else
+              NOTES=$(git log --pretty=format:"- %s" HEAD)
+            fi
+          fi
+
+          {
+            echo "NOTES<<EOF"
+            printf '%s\n' "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: eSign CLI ${{ github.ref_name }}
+          body: |
+            ## eSign Java SDK CLI — ${{ github.ref_name }}
+
+            ${{ steps.changelog.outputs.NOTES }}
+
+            ---
+
+            ### Installation
+
+            Download `eSignASPLibrary5_10.jar` from the assets below.
+
+            1. Place the JAR in the `dist/` folder alongside the `lib/` directory.
+            2. On Linux/macOS: `chmod +x esign-cli.sh`
+            3. Call from PHP: `shell_exec('/opt/esign/esign-cli.sh request.json')`
+
+            **Requirements:** Java 11+
+
+            See [CLI_GUIDE.md](https://github.com/${{ github.repository }}/blob/master/documentation/CLI_GUIDE.md) for full documentation and PHP examples.
+          files: dist/eSignASPLibrary5_10.jar
+          draft: false
+          prerelease: false
