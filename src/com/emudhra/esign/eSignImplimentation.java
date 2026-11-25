@@ -16,8 +16,12 @@ import org.emcastle.asn1.x500.X500Name;
 import org.emcastle.asn1.x500.style.BCStyle;
 import org.emcastle.asn1.x500.style.IETFUtils;
 import org.emcastle.asn1.x509.X509CertificateStructure;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.security.PublicKey;
+import java.security.cert.CertificateFactory;
+import javax.crypto.Cipher;
 import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
@@ -139,6 +143,8 @@ public final class eSignImplimentation {
             if (!dir.exists()) {
                 dir.mkdirs();
             }
+            // Attach file logger to tempFolder/logs. No-op if already attached or logging is off.
+            EsignLoggerFactory.initFileHandler(tempFolder + File.separator + "logs");
 
             Calendar cal = Calendar.getInstance();
             cal.add(Calendar.MINUTE, 0);
@@ -228,17 +234,15 @@ public final class eSignImplimentation {
                                         input.pageLevelCoordinates(eSignUtility.validatePageLevelCordinate(pageLevelCoordinates, false, pdfEngine, decodePDF));
                                     }
                                 } catch (Exception ex) {
-                                    serviceReturnObj.setErrorCode("RDSA-120");
+                                    serviceReturnObj.setErrorCode("ESS-120");
                                     serviceReturnObj.setErrorMessage("Invalid Coordinate.");
                                     return serviceReturnObj;
                                 }
                             }
 
-                            if (eSignUtility.isNullOrEmpty(input.getPageLevelCoordinates())) {
-                                serviceReturnObj.setErrorCode("ESS-120");
-                                serviceReturnObj.setErrorMessage("Unable to find content");
-                                return serviceReturnObj;
-                            }
+                            // No blanket pageLevelCoordinates check here:
+                            // named-coordinate modes don't use it, PageLevel is validated above
+                            // (ESS-120 "Invalid Coordinate.") and content search fails earlier with ESS-120.
 
                             // Appearance-specific validation
                             if (null != input.getAppearanceType()) {
@@ -407,11 +411,14 @@ public final class eSignImplimentation {
                             preSignedPdf = org.emcastle.util.encoders.Base64.toBase64String(preSignedPdf.getBytes("utf-8"));
                         }
 
-                        ReturnDocument returnDocument = new ReturnDocument("", count, input.getDocInfo(), input.getDocURL(), hexHashDocument, preSignedPdf, eSign.InputType.PDF, input.isPatchSignatureAppearance());
+                        ReturnDocument returnDocument = new ReturnDocument("", count, input.getDocInfo(), input.getDocURL(), hexHashDocument, preSignedPdf, eSign.InputType.PDF, input.isPatchSignatureAppearance())
+                                .withTextContentPosition(input.getTextContentPosition());
                         returnDocuments.add(returnDocument);
                         count++;
                     } catch (Exception e) {
-                        LOGGER.warning("" + e);
+                        LOGGER.log(java.util.logging.Level.WARNING,
+                                "Unable to generate appearance for doc[" + count + "] docInfo=" + input.getDocInfo()
+                                + " appearanceType=" + input.getAppearanceType() + " txn=" + transactionID, e);
                         ReturnDocument returnDocument = new ReturnDocument(0, "Unable to generate appreance - " + e.getMessage(), "ESS-108", 0);
                         returnDocuments.add(returnDocument);
                     }
@@ -449,6 +456,56 @@ public final class eSignImplimentation {
                 requestXML = eSignUtility.generateRequestXML(returnDocuments, signerID, eSignSettings.getASPID(), responseUrl, redirectUrl, transactionID, timeStamp, maxWaitPeriod, isLTVRequired);
             }
             String signedRequestXML = eSignUtility.signXMLAndroid(requestXML, pfxpath, password, pfxAlias);
+
+            // Encrypted Aadhaar flow: skip the gateway API call and return a wrapper XML
+            // carrying the RSA-encrypted Aadhaar number plus the signed request.
+            EncryptedAadhaarConfig aadhaarConfig = null;
+            for (eSignInput inp : inputs) {
+                if (inp.isEncryptedAadhaarFlowEnabled() && inp.getEncryptedAadhaarConfig() != null) {
+                    aadhaarConfig = inp.getEncryptedAadhaarConfig();
+                    break;
+                }
+            }
+            if (aadhaarConfig != null) {
+                try {
+                    String aadhaar = aadhaarConfig.getAadhaarNumber();
+                    if (aadhaar == null || !aadhaar.matches("\\d{12}")) {
+                        serviceReturnObj.setTransactionID(transactionID);
+                        serviceReturnObj.setErrorCode("ESS-130");
+                        serviceReturnObj.setStatus(0);
+                        serviceReturnObj.setErrorMessage("Invalid Aadhaar number: must be exactly 12 digits with no spaces or separators.");
+                        return serviceReturnObj;
+                    }
+                    PublicKey publicKey = loadPublicKeyFromConfig(aadhaarConfig);
+                    String encryptedAadhaar = encryptAadhaar(aadhaar, publicKey);
+                    String base64SignedXML = new String(Base64.encode(signedRequestXML.getBytes("UTF-8")), "UTF-8");
+                    String wrapperXML = "<eSignXML>"
+                        + "<EncryptedAadhaar txn=\"" + transactionID + "\">" + encryptedAadhaar + "</EncryptedAadhaar>"
+                        + "<Base64eSignXML>" + base64SignedXML + "</Base64eSignXML>"
+                        + "</eSignXML>";
+                    serviceReturnObj.setRequestXML(signedRequestXML);
+                    serviceReturnObj.setPreSignedTempFile(tempFilePath);
+                    serviceReturnObj.setTransactionID(transactionID);
+                    serviceReturnObj.setReturnValues(returnDocuments);
+                    serviceReturnObj.setGatewayParameter(URLEncoder.encode(wrapperXML, "UTF-8"));
+                    serviceReturnObj.setStatus(1);
+                    return serviceReturnObj;
+                } catch (IllegalArgumentException e) {
+                    serviceReturnObj.setTransactionID(transactionID);
+                    serviceReturnObj.setErrorCode("ESS-131");
+                    serviceReturnObj.setStatus(0);
+                    serviceReturnObj.setErrorMessage(e.getMessage());
+                    return serviceReturnObj;
+                } catch (Exception e) {
+                    LOGGER.log(java.util.logging.Level.WARNING, "Aadhaar encryption failed for txn: " + transactionID, e);
+                    serviceReturnObj.setTransactionID(transactionID);
+                    serviceReturnObj.setErrorCode("ESS-132");
+                    serviceReturnObj.setStatus(0);
+                    serviceReturnObj.setErrorMessage("Aadhaar encryption failed: " + e.getMessage());
+                    return serviceReturnObj;
+                }
+            }
+
             String URLEncodedsignedRequestXML = URLEncoder.encode(signedRequestXML, "UTF-8");
             serviceReturnObj.setRequestXML(signedRequestXML);
             String responseXML = "";
@@ -529,6 +586,11 @@ public final class eSignImplimentation {
     }
 
     protected eSignServiceReturn getSigedDocument(String responseXML, String tempFilePath, int SignatureContents) {
+        return getSigedDocument(responseXML, tempFilePath, SignatureContents, null);
+    }
+
+    protected eSignServiceReturn getSigedDocument(String responseXML, String tempFilePath, int SignatureContents,
+            AadhaarSignatureAppearance appearance) {
         eSignServiceReturn serviceReturnObj = new eSignServiceReturn();
         try {
             if (responseXML.isEmpty()) {
@@ -610,6 +672,8 @@ public final class eSignImplimentation {
                 if (certNodes.getLength() > 0 && certNodes.item(0) != null) {
                     userX509CertBase64 = eSignUtility.getCharacterDataFromElement((Element) certNodes.item(0));
                 }
+                // Surface the signer certificate details; null when absent or unparsable.
+                serviceReturnObj.setSignerCertificateInfo(SignerCertificateInfo.fromBase64(userX509CertBase64));
 
                 NodeList docSignatureNodes = tempNodeList.item(0).getChildNodes();
                 for (int itrCount = 0; itrCount < docSignatureNodes.getLength(); itrCount++) {
@@ -645,8 +709,10 @@ public final class eSignImplimentation {
                                 returnDocument.setStatus(1);
                             } else {
                                 byte[] array = signClose(PKCS7ResponseBase64, returnDocument.getPreSignedDocument(), SignatureContents);
-                                if (returnDocument.isPatchSignatureAppearance()) {
-                                    array = patchSignatureAppearance(array, userX509CertBase64);
+                                // A supplied appearance drives the overlay on its own.
+                                if (appearance != null || returnDocument.isPatchSignatureAppearance()) {
+                                    array = patchSignatureAppearance(array, userX509CertBase64,
+                                            returnDocument.getTextContentPosition(), appearance);
                                 }
                                 String pdfBase64 = org.emcastle.util.encoders.Base64.toBase64String(array);
                                 returnDocument.setSignedDocument(pdfBase64);
@@ -692,37 +758,84 @@ public final class eSignImplimentation {
         return pdfEngine.injectSignature(pkcs7Bytes, preSign, contentEstimated);
     }
 
-    private byte[] patchSignatureAppearance(byte[] signedPdfBytes, String userX509CertBase64) {
+    /**
+     * Adds the signer details (name / masked Aadhaar from the gateway certificate,
+     * or an ASP-supplied {@link AadhaarSignatureAppearance}) as a locked Stamp
+     * overlay on the newest signature's boxes. The signed widget is never touched,
+     * so the signature stays valid. Returns the input unchanged on any failure.
+     */
+    private byte[] patchSignatureAppearance(byte[] signedPdfBytes, String userX509CertBase64,
+            eSign.Coordinates contentPosition, AadhaarSignatureAppearance appearance) {
         try {
-            if (userX509CertBase64 == null || userX509CertBase64.trim().isEmpty())
+            if (appearance == null && (userX509CertBase64 == null || userX509CertBase64.trim().isEmpty()))
                 return signedPdfBytes;
+            if (appearance != null && appearance.getContentPosition() != null)
+                contentPosition = appearance.getContentPosition();
 
-            byte[] certBytes = org.emcastle.util.encoders.Base64.decode(userX509CertBase64.trim());
-            X509CertificateStructure cert = X509CertificateStructure.getInstance(
-                    org.emcastle.asn1.ASN1Primitive.fromByteArray(certBytes));
-            X500Name subject = cert.getSubject();
+            SignerCertificateInfo certInfo = SignerCertificateInfo.fromBase64(userX509CertBase64);
+            String certName = (certInfo != null && certInfo.getSubjectCommonName() != null)
+                    ? certInfo.getSubjectCommonName() : "Unknown";
+            String certAadhaar = (certInfo != null && certInfo.getAadhaarNumber() != null)
+                    ? certInfo.getAadhaarNumber() : "XXXX";
+            SimpleDateFormat sdf = new SimpleDateFormat("dd-MMM-yyyy HH:mm:ss");
 
-            String certName = "Unknown";
-            RDN[] cnRDNs = subject.getRDNs(BCStyle.CN);
-            if (cnRDNs != null && cnRDNs.length > 0) {
-                certName = IETFUtils.valueToString(cnRDNs[0].getFirst().getValue());
-            }
-
-            String aadhaarLast4 = "XXXX";
-            try {
-                RDN[] titleRDNs = subject.getRDNs(BCStyle.T);
-                if (titleRDNs != null && titleRDNs.length > 0) {
-                    String val = IETFUtils.valueToString(titleRDNs[0].getFirst().getValue());
-                    if (val != null && val.length() >= 4) {
-                        aadhaarLast4 = val.substring(val.length() - 4);
-                    }
+            PdfEngine.LineBuilder lines = (reason, location, signedOn) -> {
+                if (appearance != null) {
+                    return appearance.buildLines(certName, certAadhaar, reason, location, signedOn);
                 }
-            } catch (Exception ignored) { }
+                List<String> l = new ArrayList<>();
+                l.add("Digitally Signed by");
+                l.add("Name : " + certName);
+                l.add("Aadhaar No : **** **** " + lastFour(certAadhaar));
+                if (reason != null && !reason.trim().isEmpty()) l.add("Reason: " + reason);
+                l.add("Date : " + sdf.format(signedOn));
+                return l;
+            };
 
-            return pdfEngine.patchSignatureAppearance(signedPdfBytes, certName, aadhaarLast4);
+            PdfEngine.OverlayStyle style = new PdfEngine.OverlayStyle(
+                    appearance != null ? appearance.resolveBaseFontName() : "Helvetica",
+                    appearance != null ? appearance.resolveFontColor() : new float[]{0f, 0f, 0f},
+                    appearance != null ? appearance.getMarginLeft() : 4f,
+                    appearance != null ? appearance.getMarginRight() : 4f,
+                    appearance != null ? appearance.getMarginTop() : 3f,
+                    appearance != null ? appearance.getMarginBottom() : 3f,
+                    appearance != null ? appearance.getFontSize() : 0f,
+                    appearance != null ? appearance.getLeading() : 0f,
+                    contentPosition);
+            return pdfEngine.addSignatureDetailsOverlay(signedPdfBytes, lines, style);
         } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.WARNING, "Signature details overlay skipped", e);
             return signedPdfBytes;
         }
+    }
+
+    private static String lastFour(String aadhaar) {
+        return aadhaar != null && aadhaar.length() > 4 ? aadhaar.substring(aadhaar.length() - 4) : aadhaar;
+    }
+
+    private PublicKey loadPublicKeyFromConfig(EncryptedAadhaarConfig config) throws Exception {
+        byte[] cerBytes;
+        if (config.getCerFilePath() != null) {
+            cerBytes = Files.readAllBytes(new File(config.getCerFilePath()).toPath());
+        } else if (config.getCerBase64() != null) {
+            cerBytes = Base64.decode(config.getCerBase64());
+        } else {
+            throw new IllegalArgumentException("EncryptedAadhaarConfig must specify either a CER file path or base64 certificate data.");
+        }
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        java.security.cert.Certificate cert = cf.generateCertificate(new ByteArrayInputStream(cerBytes));
+        PublicKey key = cert.getPublicKey();
+        if (!"RSA".equals(key.getAlgorithm())) {
+            throw new IllegalArgumentException("Aadhaar public key must be RSA; found: " + key.getAlgorithm());
+        }
+        return key;
+    }
+
+    private String encryptAadhaar(String aadhaarNumber, PublicKey publicKey) throws Exception {
+        Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+        byte[] encryptedBytes = cipher.doFinal(aadhaarNumber.getBytes("UTF-8"));
+        return new String(Base64.encode(encryptedBytes), "UTF-8");
     }
 
     // -----------------------------------------------------------------------
@@ -761,6 +874,7 @@ public final class eSignImplimentation {
 
             File dir = new File(tempFolder);
             if (!dir.exists()) dir.mkdirs();
+            EsignLoggerFactory.initFileHandler(tempFolder + File.separator + "logs");
 
             Calendar cal = Calendar.getInstance();
             cal.add(Calendar.MINUTE, 0);
@@ -845,17 +959,15 @@ public final class eSignImplimentation {
                                         input.pageLevelCoordinates(eSignUtility.validatePageLevelCordinate(pageLevelCoordinates, false, pdfEngine, decodePDF));
                                     }
                                 } catch (Exception ex) {
-                                    serviceReturnObj.setErrorCode("RDSA-120");
+                                    serviceReturnObj.setErrorCode("ESS-120");
                                     serviceReturnObj.setErrorMessage("Invalid Coordinate.");
                                     return serviceReturnObj;
                                 }
                             }
 
-                            if (eSignUtility.isNullOrEmpty(input.getPageLevelCoordinates())) {
-                                serviceReturnObj.setErrorCode("ESS-120");
-                                serviceReturnObj.setErrorMessage("Unable to find content");
-                                return serviceReturnObj;
-                            }
+                            // No blanket pageLevelCoordinates check here:
+                            // named-coordinate modes don't use it, PageLevel is validated above
+                            // (ESS-120 "Invalid Coordinate.") and content search fails earlier with ESS-120.
 
                             if (null != input.getAppearanceType()) {
                                 switch (input.getAppearanceType()) {
@@ -1303,7 +1415,6 @@ public final class eSignImplimentation {
 
         int fontSize = input.getSignatureFontSize();
         PdfColor fontColor = (input.getCustomStyle() != null) ? input.getCustomStyle().getFontColor() : null;
-        boolean acro6Layers = !(input.isTickRequired());
         String layer2Text = null;
         String oneLinerText = null;
         byte[] imageBytes = null;
@@ -1431,10 +1542,13 @@ public final class eSignImplimentation {
                 break;
         }
 
+        // showAadhaarOnSignature: the post-sign overlay carries the text, so the signed
+        // StandardSignature box is left blank.
         return new AppearanceSpec(mode, layer2Text, fontSize, fontColor,
-                acro6Layers, false, oneLinerText, imageBytes,
+                false, oneLinerText, imageBytes,
                 advanceImageType, advanceSvgBytes, leftSideText, rightSideText,
-                rightBorderRgb, leftBorderRgb);
+                rightBorderRgb, leftBorderRgb)
+                .withTextLayout(input.getTextContentPosition(), input.isShowAadhaarOnSignature());
     }
 
     private BorderSpec buildBorderSpec(eSignInput input) {

@@ -51,7 +51,6 @@ public class RequestMapper {
         builder.setCoSign(doc.coSign);
         builder.isRightOrigin(doc.rightOrigin);
         builder.setBorderRequired(doc.borderRequired);
-        builder.setTickRequired(doc.tickRequired);
         builder.setPatchSignatureAppearance(doc.patchSignatureAppearance);
 
         if (doc.signatureFontSize > 0) builder.setSignatureFontSize(doc.signatureFontSize);

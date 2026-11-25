@@ -5,6 +5,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [v1.1.0] — 2026-11-25
+
+SDK JAR: `eSignASPLibrary5_11.jar` (Implementation-Version 5.11).
+
+### Added
+- `verifyEsignResponseHash()` — verify a returned PKCS#7 against the sent hash, with OCSP/CRL revocation check (`eSignVerifier`, `eSignVerificationResult`)
+- `getSigedDocument(responseXML, tempFile, AadhaarSignatureAppearance)` — customisable signer-details appearance (templates, labels, date format, font, colour, position)
+- `eSignServiceReturn.getSignerCertificateInfo()` — parsed signer certificate
+- Encrypted Aadhaar flow — `setEncryptedAadhaarFlowEnabled`, `setEncryptedAadhaarConfig`, `EncryptedAadhaarConfig` (errors ESS-130..132)
+- `setShowAadhaarOnSignature` and `setTextContentPosition` on `eSignInputBuilder`
+- File logging to `<tempFolder>/logs/eSign.log`, started by `getGatewayParameter` or `prepareDocuments`
+- NetBeans project files (`nbproject/`, `nbbuild.xml`)
+
+### Changed
+- Post-sign signer details are drawn as a locked stamp annotation in an incremental update; the signed widget is never rewritten, so earlier signatures stay valid when co-signing
+- `PageLevel` coordinates accept fractional values
+- Invalid coordinate error is now `ESS-120` (was `RDSA-120`); all SDK errors use the `ESS-` prefix
+- `pdfViewerLicence` is optional; `getEncryptedPath()` works without it
+
+### Deprecated
+- `eSignInputBuilder.setTickRequired()` / `eSignInput.isTickRequired()` — no effect; kept for source compatibility. The validity icon is drawn by the PDF viewer
+
+### Removed
+- `tickRequired` field from the CLI request
+- Example credentials and personal endpoints from `src/Test.java`
+
+### Documentation
+- New guides: Encrypted Aadhaar, custUI, appearance customisation, signer certificate, verification, text position, logging
+- Added Gson to `NOTICE`
+
+---
+
 ## [v1.0.0] — 2026-06-22
 
 ### Added

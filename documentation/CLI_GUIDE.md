@@ -5,7 +5,7 @@ The CLI wrapper lets any language (PHP, Node, Python, Ruby, etc.) use the eSign 
 ## Requirements
 
 - Java 11 or later (`java -version` to check)
-- Built JAR: `dist/eSignASPLibrary5_10.jar` (includes CLI classes)
+- Built JAR: `dist/eSignASPLibrary5_11.jar` (includes CLI classes)
 - `lib/gson-2.10.1.jar` (bundled in repo)
 
 ## Quick start

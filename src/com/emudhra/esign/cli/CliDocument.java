@@ -34,7 +34,6 @@ public class CliDocument {
 
     // Flags (coSign defaults to true to match SDK default)
     public boolean borderRequired;
-    public boolean tickRequired;
     public boolean coSign = true;
     public boolean rightOrigin;
     public String pdfPassword;

@@ -61,6 +61,14 @@ Website: https://logging.apache.org/log4j/2.x/
 Copyright (c) 1999-2023 The Apache Software Foundation
 
 =======================================================================
+Google Gson
+=======================================================================
+Version: 2.10.1
+License: Apache License, Version 2.0
+Website: https://github.com/google/gson
+Copyright (c) 2008 Google Inc.
+
+=======================================================================
 Woodstox XML Processor
 =======================================================================
 Version: 5.2.1
@@ -143,6 +151,7 @@ The following components are licensed under the Apache License 2.0:
 - Apache XML Security for Java
 - Apache XMLGraphics Commons
 - Apache Log4j API
+- Google Gson
 - Woodstox XML Processor
 
 Licensed under the Apache License, Version 2.0 (the "License");

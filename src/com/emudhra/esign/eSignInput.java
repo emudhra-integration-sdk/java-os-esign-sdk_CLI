@@ -195,12 +195,43 @@ public final class eSignInput {
         return appearanceType;
     }
 
+    /** @deprecated No effect; see {@link eSignInputBuilder#setTickRequired(boolean)}. */
+    @Deprecated
     public boolean isTickRequired() {
         return TickRequired;
     }
 
     public boolean isPatchSignatureAppearance() {
         return patchSignatureAppearance;
+    }
+
+    /** Same flag as {@link #isPatchSignatureAppearance()} (alternate name). */
+    public boolean isShowAadhaarOnSignature() {
+        return patchSignatureAppearance;
+    }
+
+    private eSign.Coordinates textContentPosition = eSign.Coordinates.TopLeft;
+    private EncryptedAadhaarConfig encryptedAadhaarConfig;
+    private boolean encryptedAadhaarFlowEnabled;
+
+    public eSign.Coordinates getTextContentPosition() {
+        return textContentPosition;
+    }
+
+    public EncryptedAadhaarConfig getEncryptedAadhaarConfig() {
+        return encryptedAadhaarConfig;
+    }
+
+    public boolean isEncryptedAadhaarFlowEnabled() {
+        return encryptedAadhaarFlowEnabled;
+    }
+
+    eSignInput withExtras(eSign.Coordinates textContentPosition,
+            EncryptedAadhaarConfig encryptedAadhaarConfig, boolean encryptedAadhaarFlowEnabled) {
+        this.textContentPosition = textContentPosition != null ? textContentPosition : eSign.Coordinates.TopLeft;
+        this.encryptedAadhaarConfig = encryptedAadhaarConfig;
+        this.encryptedAadhaarFlowEnabled = encryptedAadhaarFlowEnabled;
+        return this;
     }
 
     public eSignInput(String docInfo, String docHash, String docURL) {

@@ -27,9 +27,9 @@ public class Test {
 //String licenceFilePath, String pfxpath, String password, String pfxAlias, boolean proxyreq,
 //            String proxyIp, int proxyPort, int sessionTimeout, eSignSettings.LogType logType, String ProxyUserID, String ProxyUserPassword, String pdfViewerLicence
 //has context menu
-//        eSign eSignObj = new eSign(licenceFilePath, "D:\\env\\eSign\\API.pfx", "Q1w2e3/", "CTCAG2", false, 
+//        eSign eSignObj = new eSign(licenceFilePath, pfxPath, pfxPassword, pfxAlias, false, 
 //                "43.205.25.216", 443);
-//        eSign eSignObj = new eSign(licenceFilePath, "D:\\env\\eSign\\API.pfx", "Q1w2e3/", "CTCAG2", 21000);
+//        eSign eSignObj = new eSign(licenceFilePath, pfxPath, pfxPassword, pfxAlias, 21000);
 //        eSign eSignObj = new eSign(licenceFilePath, pfxPath, pfxPassword, pfxAlias, false,
 //                "", 0, 0, eSignSettings.LogType.AllLog);
 
@@ -68,7 +68,7 @@ public class Test {
         eSignInputs.add(bulider);
 
         //To sign pdfs
-//        eSignServiceReturn serviceReturn = eSignObj.getGatewayParameter(eSignInputs, "abhibs", "", "https://abhishek.free.beeceptor.com", "https://abhishek.free.beeceptor.com", tempFolder, eSign.eSignAPIVersion.V3, eSign.AuthMode.FingerPrint);
+//        eSignServiceReturn serviceReturn = eSignObj.getGatewayParameter(eSignInputs, "signerID", "", "https://example.com/esign/response", "https://example.com/esign/redirect", tempFolder, eSign.eSignAPIVersion.V3, eSign.AuthMode.FingerPrint);
 
 //        System.out.println(serviceReturn.getGatewayParameter());
 //        System.out.println(serviceReturn.getErrorMessage());
